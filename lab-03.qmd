@@ -1,0 +1,260 @@
+---
+title: "lab-03"
+subtitle: ESS330
+author:
+  - name: Miranda
+    email: 
+format: html
+---
+
+```{r}
+library(zoo)
+library(flextable)
+library(tidyverse)
+```
+
+Question 2:
+
+```{r}
+#Step 1
+covid_data = read_csv('https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv')
+
+#Step 2
+date <- "2022-02-01"
+my.date <- as.Date(date)
+class(my.date)
+
+my.state = "Colorado"
+class(my.state)
+
+```
+
+```{r}
+#Step 3
+colorado <- covid_data %>% 
+  filter(state == my.state) %>% 
+  group_by(county) %>% 
+  arrange(date) %>% 
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths)) %>% 
+  ungroup()
+```
+
+```{r}
+#Step 4
+filter(colorado, date == my.date) %>% 
+  slice_max(cases, n = 5) %>% 
+  select(Date = date, County = county, Cases = cases) %>% 
+  flextable() %>% 
+  set_caption("Most Cumulative Cases")
+
+colorado %>% 
+  filter(date == my.date & !is.na(cases)) %>% 
+  slice_max(cases, n = 5) %>% 
+  select(Date = date, County = county, Cases = new_cases) %>% 
+  flextable() %>% 
+  set_caption("Most New Cases")
+
+```
+
+Question 3:
+
+```{r}
+pop_url <- 'https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv'
+pop = read_csv(pop_url)
+```
+
+```{r}
+#Create five digit FIPS and only keep "NAME" and "2021" 
+pop_data <- read.csv(pop_url) %>% 
+  filter(COUNTY != 0) %>% 
+  mutate(fips = paste0(sprintf("%02d", STATE), sprintf("%03d", COUNTY))) %>% 
+  select(fips, contains('NAME'), contains('2021'))
+
+#What is the range of populations seen in Colorado counties in 2021: 
+pop_data %>% filter(STNAME == "Colorado") %>% 
+  filter(POPESTIMATE2021 == max(POPESTIMATE2021) | POPESTIMATE2021 == min(POPESTIMATE2021)) %>% 
+  select(POPESTIMATE2021) %>% 
+  flextable()
+#The range is a maximum of 737,287 and a minimum of 741.
+
+#Join the population data to the Colorado COVID data and compute per capita cumulative cases, new cases, new deaths 
+perCap = inner_join(colorado, select(pop_data, fips, pop = POPESTIMATE2021), by = 'fips') %>% 
+  mutate(cumPerCap = cases/pop, newCasesPerCap = new_cases/pop, newDeathsPerCap = new_deaths/pop)
+
+```
+
+```{r}
+#Top 5 counties with the most cumulative cases per capita
+perCap %>% 
+  filter(date == my.date) %>% 
+  arrange(desc(cumPerCap)) %>% 
+  select(county, cumPerCap) %>% 
+  slice_head(n = 5) %>% 
+  flextable() %>% 
+  flextable::set_caption("Top 5 Counties with the Most Cumulative Cases")
+
+```
+```{r}
+#Top 5 counties with the most new cases per capita
+perCap %>% 
+  filter(date == my.date) %>% 
+  arrange(desc(newCasesPerCap)) %>% 
+  select(county, newCasesPerCap) %>% 
+  slice_head(n = 5) %>% 
+  flextable() %>% 
+  flextable::set_caption("Top 5 Counties with the Most New Cases")
+```
+
+Question 4:
+```{r}
+latest_date <- max(perCap$date, na.rm = TRUE)
+start_date <- latest_date - days(14)
+
+perCap$pop <- as.numeric(perCap$pop)
+
+
+perCap %>% 
+  filter(date > start_date & date <= latest_date) %>% 
+  group_by(county) %>% 
+  summarize(total_new_cases = sum(new_cases, na.rm = TRUE),
+    population = first(pop)) %>% 
+  mutate(population = as.numeric(population), 
+    new_cases_100k = (total_new_cases / population) * 100000) %>% 
+  arrange(desc(new_cases_100k)) %>% 
+  slice_head(n = 5) %>% 
+  flextable()
+#The top five counties with the most new cases per 100000 people are Mineral, Boulder, Larimer, Denver, and Jefferson.
+
+
+```
+
+Question 5:
+```{r}
+library(dplyr)
+
+covid_death_ratio <- perCap %>% 
+  filter(date >= "2021-01-01" & date <= "2021-12-31") %>% 
+  inner_join(pop_data, by = "fips") %>% 
+  group_by(county) %>% 
+  summarize(total_covid_deaths = sum(new_deaths, na.rm = TRUE), 
+            total_deaths = first(DEATHS2021)) %>% 
+  mutate(covid_death_percentage = (total_covid_deaths / total_deaths) * 100) %>% 
+  filter(covid_death_percentage >= 20)
+
+library(ggplot2)
+
+ggplot(covid_death_ratio, aes(x = county, y = covid_death_percentage, fill = county)) +
+  geom_col() + 
+  labs(title = "Counties Where COVID Deaths Are 20% or More of Annual Deaths in 2021",
+       x = "County",
+       y = "COVID Death Percentage (%)") +
+  theme(legend.position = "none")
+
+```
+Question 6:
+```{r}
+state_covid = covid_data %>% 
+  group_by(date, state) %>% 
+  summarise(cases = sum(cases)) %>% 
+  filter(state %in% c('New York', 'Ohio', 'Colorado', 'Alabama')) %>% 
+  group_by(state) %>% 
+  mutate(newCases = cases - lag(cases),
+         roll = zoo::rollmean(newCases, k = 7, align = "right", fill = NA)) %>% 
+  ungroup()
+
+ggplot(state_covid, aes(x = date)) +
+  geom_col(aes(y = newCases), fill = "lightblue", col = NA) +
+  geom_line(aes(y = roll), col = "darkblue", size = 1) +
+  theme_linedraw() +
+  facet_wrap(~state, nrow = 2, scales = "free_y") +
+  labs(title = "Cumulative COVID Cases",
+       x = "Date", y = "Case Count")
+```
+```{r}
+pp = pop %>% 
+  group_by(STNAME) %>% 
+  summarise(state_pop = sum(POPESTIMATE2021)) %>% 
+  inner_join(state_covid, by = c("STNAME"="state")) %>% 
+  mutate(perCap = newCases / state_pop) %>% 
+  group_by(STNAME) %>% 
+  mutate(roll = zoo::rollmean(perCap, k = 7, align = "right", fill = NA)) %>% 
+  ungroup()
+
+ggplot(pp, aes(x = date)) +
+  geom_line(aes(y = roll, col = STNAME), size = 1) +
+  theme_linedraw() +
+  labs(title = "Cumulative COVID Cases", x = "Date", y = "Case Count")
+
+#By scaling the population, I think it definitely helps create a more proportional picture of how the deaths relate to the population. For example, in the earlier graph New York seems to have a much bigger peak than Alabama, but in the later graph these two states seem about equal. I think scaling helps to put the data in context and make it more nuanced with the provided information.
+
+```
+Question 7:
+```{r}
+location = read.csv('https://raw.githubusercontent.com/mikejohnson51/csu-ess-330/refs/heads/main/resources/county-centroids.csv')
+
+covid_data <- covid_data %>% mutate(fips = as.character(fips))
+location <- location %>% mutate(fips = as.character(fips))
+
+meta = inner_join(covid_data, location, by = "fips") %>% 
+  group_by(date) %>% 
+  summarise(wmX_c = sum(LON*cases) / sum(cases),
+            wmY_c = sum(LAT*cases) / sum(cases),
+            cases = sum(cases)) %>% 
+  arrange(date) %>% 
+  mutate(d = 1:n())
+
+
+ggplot(meta) +
+  borders("state", fill = "gray90", colour = "white") +
+  geom_point(aes(x = wmX_c, y = wmY_c, size = cases), color = "darkred", alpha = 25) +
+  theme_linedraw() +
+  labs(color = "Time", size = "Cases", x = "", y = "", title = "Weighted Center of COVID Cases") +
+  theme(legend.position = "none")
+
+#The movement of COVID-19 was mostly in one area before moving steadily and then dispersing into many different areas suddenly. One possible driver is a superspreader event; in the area where there is a large amount of dots, Kentucky, it is possible that there was a large event where multiple people got sick. Then this cohort moved together across multiple states, before dispersing back to their own and spreading COVID through there.
+
+```
+Question 8:
+```{r}
+weighted_data <- inner_join(covid_data, location, by = "fips")
+
+weighted_data %>% 
+  group_by(date) %>% 
+  summarise(wmX_c = sum(LON*cases) / sum(cases),
+            wmY_c = sum(LAT*cases) / sum(cases),
+            cases = sum(cases)) %>% 
+  arrange(date) %>% 
+  mutate(d = 1:n())
+
+
+graph_cases <- weighted_data %>%
+  group_by(county) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(color = "red") + 
+  labs(title = "COVID Cases Over Time by County", x = "Date", y = "Cases") +
+  theme_minimal()
+
+print(graph_cases)
+
+graph_deaths <- weighted_data %>% 
+  group_by(county) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_line(color = "navy") + 
+  labs(title = "COVID Deaths Over Time by County", x = "Date", y = "Deaths") +
+  theme_minimal()
+
+print(graph_deaths)
+
+library(patchwork)
+
+graph_cases + graph_deaths
+
+#While my cases plot has steep jumps every so often, my deaths plot is more steady and flat. This could mean that while COVID is still spreading rapidly with spikes whenever there is a new variant, our abilities to treat patients and avoid fatalities is keeping up for the most part.
+
+```
+
+
+
+
+
