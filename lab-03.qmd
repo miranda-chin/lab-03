@@ -3,7 +3,7 @@ title: "lab-03"
 subtitle: ESS330
 author:
   - name: Miranda
-    email: 
+  - email: 
 format: 
   html:
     self-contained: true
