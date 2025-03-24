@@ -4,7 +4,9 @@ subtitle: ESS330
 author:
   - name: Miranda
     email: 
-format: html
+format: 
+  html:
+    self-contained: true
 ---
 
 ```{r}
